@@ -18,6 +18,13 @@ export default function App() {
   const [minClass, setMinClass] = useState<number>(1);
   const [maxClass, setMaxClass] = useState<number>(25);
   const [status, setStatus] = useState<string>('Initializing...');
+  const [viewState, setViewState] = useState({
+    longitude: -73.9857,
+    latitude: 40.7484,
+    zoom: 5,
+    pitch: 45,
+    bearing: 0
+  });
 
   useEffect(() => {
     let isCancelled = false;
@@ -98,6 +105,34 @@ export default function App() {
           features.features.push({ type: 'Feature', geometry, properties: { class_val: classVal } });
         }
         setData(features);
+        if (features.features.length > 0) {
+          // Compute rough bounds in lon/lat and fit view
+          let minLng = 180, minLat = 90, maxLng = -180, maxLat = -90;
+          const updateBounds = (coords: any) => {
+            if (Array.isArray(coords) && typeof coords[0] === 'number') {
+              const [lng, lat] = coords as [number, number];
+              if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+              if (lng < minLng) minLng = lng;
+              if (lng > maxLng) maxLng = lng;
+              if (lat < minLat) minLat = lat;
+              if (lat > maxLat) maxLat = lat;
+              return;
+            }
+            if (Array.isArray(coords)) {
+              for (const c of coords) updateBounds(c);
+            }
+          };
+          for (const f of features.features) {
+            if (!f.geometry) continue;
+            // @ts-expect-error coordinates exist for standard GeoJSON geometries
+            updateBounds(f.geometry.coordinates);
+          }
+          const centerLng = (minLng + maxLng) / 2;
+          const centerLat = (minLat + maxLat) / 2;
+          const span = Math.max(maxLng - minLng, maxLat - minLat);
+          const zoom = Math.max(2, Math.min(15, Math.log2(360 / Math.max(span, 1e-6))));
+          setViewState(v => ({ ...v, longitude: centerLng, latitude: centerLat, zoom }));
+        }
         setStatus(`Loaded ${features.features.length} features`);
       } finally {
         await conn.close();
@@ -132,14 +167,6 @@ export default function App() {
     ];
   }, [data, minClass, maxClass]);
 
-  const initialViewState = {
-    longitude: -73.9857,
-    latitude: 40.7484,
-    zoom: 5,
-    pitch: 45,
-    bearing: 0
-  };
-
   return (
     <div style={{ height: '100vh', width: '100vw' }}>
       <div style={{ position: 'absolute', zIndex: 10, top: 10, left: 10, background: 'rgba(255,255,255,0.9)', padding: 8, borderRadius: 4 }}>
@@ -153,9 +180,10 @@ export default function App() {
         <div style={{ marginTop: 6, fontSize: 12, color: '#555' }}>{status}</div>
       </div>
       <DeckGL
-        initialViewState={initialViewState}
+        viewState={viewState}
         controller={true}
         layers={layers as any}
+        onViewStateChange={(e: any) => setViewState(e.viewState)}
       >
         <Map
           mapboxAccessToken={MAPBOX_TOKEN}
